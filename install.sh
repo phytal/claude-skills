@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 mkdir -p "$SKILLS_DIR"
 
-skills=(flag-review implementation-review implementation-recap feedback-review)
+skills=(flag-review implementation-review implementation-recap feedback-review codex-review)
 
 for skill in "${skills[@]}"; do
   if [ -d "$SKILLS_DIR/$skill" ]; then

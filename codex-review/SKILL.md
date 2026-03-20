@@ -3,16 +3,16 @@ name: codex-review
 description: >
   Cross-validate Claude Code's implementation plan or code changes using OpenAI Codex CLI
   as an independent second opinion. Runs an iterative review loop: Codex reviews, Claude
-  evaluates the feedback (using feedback-review analysis), implements accepted changes,
-  then sends a summary back to the same Codex conversation for re-review. Repeats until
-  Codex approves or has no further actionable feedback. Triggers on phrases like
-  "codex review", "double check with codex", "second opinion", "cross-validate",
-  or "verify with codex".
+  dispatches subagents to evaluate each feedback point in parallel (using feedback-review
+  analysis), implements accepted changes via parallel subagents, then sends a summary back
+  to the same Codex conversation for re-review. Repeats until Codex approves or has no
+  further actionable feedback. Triggers on phrases like "codex review", "double check with
+  codex", "second opinion", "cross-validate", or "verify with codex".
 ---
 
 # Codex Review
 
-Iterative cross-validation loop between Claude Code and OpenAI Codex CLI.
+Iterative cross-validation loop between Claude Code and OpenAI Codex CLI, using parallel subagents for thorough evaluation and implementation.
 
 ## Prerequisites
 
@@ -25,13 +25,13 @@ Iterative cross-validation loop between Claude Code and OpenAI Codex CLI.
 Codex reviews code/plan (background Bash + TaskOutput)
         |
         v
-Claude evaluates feedback (feedback-review analysis)
+Spawn subagents to evaluate each feedback point in parallel
         |
         v
-Claude implements accepted changes
+Spawn subagents to implement accepted changes in parallel
         |
         v
-Claude resumes Codex conversation with change summary
+Resume Codex conversation with change summary
         |
         v
 Codex re-reviews --> loop until APPROVE or no actionable feedback
@@ -48,7 +48,7 @@ Determine the scope:
 
 Use the **Write tool** to write the review prompt to `/tmp/codex-prompt.txt`, then run `codex exec` as a **background Bash call** (`run_in_background: true`). Use `TaskOutput` to block until Codex finishes, then read the output file.
 
-**Do NOT use Task subagents** -- subagent Bash permissions are more restrictive than the main conversation and will be denied for file writes and `codex exec` (known issue: GitHub #25526).
+**Do NOT use Task subagents for running Codex** — subagent Bash permissions are more restrictive than the main conversation and will be denied for file writes and `codex exec`.
 
 ### 2a. Write the prompt file
 
@@ -96,48 +96,87 @@ Then use `TaskOutput(task_id=<id>, block=true, timeout=600000)` to wait for comp
 
 Use the Read tool to read `/tmp/codex-review-output.txt`.
 
-For reviewing a **plan** instead of code, replace the review instructions accordingly -- ask Codex to validate that referenced files/functions exist and behave as assumed, and that the approach is sound.
+For reviewing a **plan** instead of code, replace the review instructions accordingly — ask Codex to validate that referenced files/functions exist and behave as assumed, and that the approach is sound.
 
 Execution notes:
-- Always use `--sandbox read-only` -- Codex must never write files
+- Always use `--sandbox read-only` — Codex must never write files
 - Use `-C <dir>` to point at the project root
 - Always use `-o /tmp/codex-review-output.txt` to capture the final message
-- Always write the prompt with the Write tool -- never use `cat << 'EOF'` in Bash
+- Always write the prompt with the Write tool — never use `cat << 'EOF'` in Bash
 
-## Step 3: Evaluate Codex's feedback using feedback-review analysis
+## Step 3: Evaluate Codex's feedback using parallel subagents
 
-After reading the Codex output from `/tmp/codex-review-output.txt`, apply the **feedback-review** analysis methodology to evaluate each point Codex raised. Do NOT blindly accept Codex's feedback.
+Parse Codex's output into discrete feedback points. Then spawn one subagent per feedback point, all in parallel. Each subagent independently investigates whether Codex's claim is valid.
 
-For every discrete feedback point from Codex:
-
-| Dimension       | Question to answer |
-|-----------------|--------------------|
-| **Correctness** | Is Codex's claim factually accurate? Does the code actually exhibit the described issue? |
-| **Optimality**  | Is Codex's suggested fix the best approach, or is there a strictly better alternative? |
-| **Elegance**    | Is the suggestion clean, maintainable, and consistent with the surrounding codebase style? |
-
-Rules:
-- Verify each claim against the actual code -- read the relevant files yourself
-- If Codex is wrong about something, note it and skip that point
-- If Codex is partially right, acknowledge what's correct and what isn't
-- Codex can be wrong. Do not be sycophantic toward the reviewer.
-
-Present the evaluation as a table:
+The subagent prompt for each point:
 
 ```
-| # | Codex Feedback (summary) | Correct? | Optimal? | Elegant? | Action            |
-|---|--------------------------|----------|----------|----------|-------------------|
-| 1 | ...                      | Yes      | Yes      | Yes      | Accept            |
-| 2 | ...                      | Yes      | Partly   | No       | Alternative below |
-| 3 | ...                      | No       | --       | --       | Reject            |
+You are investigating a piece of feedback from an AI code reviewer (OpenAI Codex) to determine if it's valid.
+
+**Feedback point #N:** <summary>
+**File(s):** <file paths and lines referenced>
+**Full detail:** <the complete feedback text for this point>
+
+Instructions:
+1. Read the file(s) and lines referenced. Read enough surrounding context to fully understand the code — callers, tests, related modules, type definitions.
+2. Evaluate the feedback across three dimensions:
+
+   **Correctness**: Is Codex's claim factually accurate? Does the code actually exhibit the described issue? Verify against the real code — do not take the reviewer's word at face value.
+
+   **Optimality**: If a fix is suggested, is it the best approach? Is there a strictly better alternative?
+
+   **Elegance**: Is the suggestion clean, maintainable, and consistent with the surrounding codebase style?
+
+3. Return your verdict:
+   - correctness: yes / partly / no — with evidence (file path + line)
+   - optimality: yes / partly / no — explain why, suggest alternative if partly/no
+   - elegance: yes / partly / no — explain why
+   - action: one of:
+     - "accept" — feedback is right, apply as suggested
+     - "accept-modified" — feedback is right but a better fix exists (describe it)
+     - "reject" — feedback is wrong or not worth acting on (explain why)
+     - "discuss" — raises a real concern but needs a design decision from the user
+   - suggested_fix: specific code changes if action is accept or accept-modified
+   - files_to_modify: list of file paths that would need changes
 ```
 
-## Step 4: Implement accepted changes
+Once all subagents return, compile the results into a summary table:
 
-For all points marked "Accept" or "Alternative", implement the changes. Track what was changed:
+```
+| # | Codex Feedback (summary) | Correct? | Optimal? | Elegant? | Action           |
+|---|--------------------------|----------|----------|----------|------------------|
+| 1 | ...                      | Yes      | Yes      | Yes      | Accept           |
+| 2 | ...                      | Yes      | Partly   | No       | Accept-modified  |
+| 3 | ...                      | No       | --       | --       | Reject           |
+```
+
+For "accept-modified" rows, show the alternative. For "reject" rows, provide a one-line rationale with evidence.
+
+## Step 4: Implement accepted changes using parallel subagents
+
+Group accepted changes by file independence — changes that touch different files can be implemented in parallel, changes to the same file must be sequential.
+
+For each independent group, spawn a subagent:
+
+```
+Implement the following code change:
+
+**Feedback point #N:** <summary>
+**Action:** <accept or accept-modified>
+**Fix to apply:** <the specific fix from the evaluation step>
+**Files to modify:** <file list>
+
+Instructions:
+1. Read the target file(s) in full
+2. Apply the fix precisely — change only what's needed
+3. Verify the change doesn't break surrounding code
+4. Report back: files modified, what changed, and any concerns
+```
+
+After all implementation subagents complete, collect what was changed:
 - Which files were modified
 - What specifically changed in each file
-- Why (referencing the Codex feedback point number)
+- Which feedback point each change addresses
 
 ## Step 5: Resume the Codex conversation for re-review
 
@@ -192,14 +231,14 @@ Read the new Codex output from `/tmp/codex-review-output.txt`.
 **If verdict is APPROVE**: Stop. Present the final summary to the user.
 
 **If verdict is REQUEST CHANGES or NEEDS DISCUSSION**:
-1. Go back to Step 3: evaluate the new feedback points using feedback-review analysis
-2. Implement accepted changes (Step 4)
+1. Go back to Step 3: spawn subagents to evaluate the new feedback points
+2. Implement accepted changes via subagents (Step 4)
 3. Resume the Codex conversation with the new change summary (Step 5)
 4. Repeat
 
 **Loop termination conditions** (stop if any are true):
 - Codex returns APPROVE
-- Codex has no new actionable feedback (only style nitpicks or opinions, nothing substantive)
+- Codex has no new actionable feedback (only style nitpicks or opinions)
 
 ## Step 7: Present final results
 
@@ -207,7 +246,7 @@ When the loop terminates, present a complete summary:
 
 ---
 
-**Codex Review -- Final Results**
+**Codex Review — Final Results**
 
 **Rounds**: [N] review iterations
 
@@ -217,13 +256,13 @@ When the loop terminates, present a complete summary:
 **Feedback rejected** (with rationale):
 - [list of Codex suggestions that were rejected and why]
 
-**Final Codex Verdict**: [APPROVE / last verdict if loop hit safety limit]
+**Final Codex Verdict**: [APPROVE / last verdict if loop hit termination]
 
 ---
 
 ## Guidelines
 
-- Codex is a second opinion, not the final authority. The feedback-review analysis is the filter.
+- Codex is a second opinion, not the final authority. The subagent evaluation is the filter.
 - Never skip the feedback evaluation step. Every Codex claim must be verified against actual code before implementation.
 - If Codex and Claude genuinely disagree on a point, present both perspectives to the user with evidence and let them decide.
 - Keep prompts focused. Let Codex read files via its own tool use rather than dumping file contents into prompts.
