@@ -14,9 +14,13 @@ for skill in "${skills[@]}"; do
   else
     echo "Installing $skill..."
   fi
-  cp -r "$SCRIPT_DIR/$skill" "$SKILLS_DIR/"
+  cp -r "$SCRIPT_DIR/skills/$skill" "$SKILLS_DIR/"
 done
 
 echo ""
 echo "Installed ${#skills[@]} skills to $SKILLS_DIR"
 echo "They'll be available globally in your next Claude Code session."
+echo ""
+echo "Alternatively, install as a plugin for auto-updates:"
+echo "  /plugin marketplace add phytal/claude-skills"
+echo "  /plugin install claude-skills@phytal-skills"

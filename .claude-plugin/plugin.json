@@ -1,0 +1,13 @@
+{
+  "name": "claude-skills",
+  "description": "Code review, flag triage, implementation review, and cross-validation skills using parallel subagents",
+  "version": "1.0.0",
+  "author": {
+    "name": "Will Zhang",
+    "email": "willzhang058@gmail.com"
+  },
+  "homepage": "https://github.com/phytal/claude-skills",
+  "repository": "https://github.com/phytal/claude-skills",
+  "license": "MIT",
+  "keywords": ["code-review", "implementation", "flag-triage", "codex", "subagents"]
+}

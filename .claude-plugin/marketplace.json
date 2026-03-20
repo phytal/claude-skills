@@ -1,0 +1,15 @@
+{
+  "name": "phytal-skills",
+  "owner": {
+    "name": "Will Zhang",
+    "email": "willzhang058@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "claude-skills",
+      "source": "./",
+      "description": "Code review, flag triage, implementation review, and cross-validation skills using parallel subagents",
+      "version": "1.0.0"
+    }
+  ]
+}
