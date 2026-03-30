@@ -14,22 +14,9 @@ A collection of Claude Code skills for code review and implementation analysis, 
 
 ## Install
 
-### As a plugin (recommended, auto-updates)
-
-```
-/plugin marketplace add phytal/claude-skills
-/plugin install claude-skills@phytal-skills
-```
-
-### Manual
-
 ```bash
-git clone https://github.com/phytal/claude-skills.git
-cd claude-skills
-./install.sh
+npx skills add phytal/claude-skills
 ```
-
-This copies the skills to `~/.claude/skills/` where they're available globally.
 
 ## Usage
 
