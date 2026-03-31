@@ -15,7 +15,7 @@ A collection of Claude Code skills for code review and implementation analysis, 
 ## Install
 
 ```bash
-npx skills add phytal/claude-skills
+npx skills add phytal/skills
 ```
 
 ## Usage
